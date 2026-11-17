@@ -141,3 +141,27 @@ def test_process_closed_stdout_descriptor_exit_2(tmp_path):
         'os.close(1); raise SystemExit(entrypoint())', str(p)
     ], capture_output=True)
     assert result.returncode == 2 and result.stdout == result.stderr == b''
+
+
+def _close_stdout_at_exec():
+    import os
+    os.close(1)
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='requires POSIX fd inheritance')
+@pytest.mark.parametrize('command', _commands())
+def test_process_no_stdout_at_interpreter_start(tmp_path, command):
+    # Closing fd 1 after startup leaves a wrapper, unlike this real exec case.
+    p = tmp_path/'data.json'
+    p.write_text(json.dumps(doc(hist())))
+    result = subprocess.run(command + [str(p)], stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, preexec_fn=_close_stdout_at_exec)
+    assert result.returncode == 2 and result.stdout == result.stderr == b''
+
+
+def test_callable_none_stdout_returns_2_without_replacing_it(tmp_path, monkeypatch):
+    p = tmp_path/'data.json'
+    p.write_text(json.dumps(doc(hist())))
+    monkeypatch.setattr(sys, 'stdout', None)
+    assert main([str(p)]) == 2
+    assert sys.stdout is None

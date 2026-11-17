@@ -1,0 +1,163 @@
+# pooledbounds
+
+What can pooled p95 actually be when two teams sent histograms with different
+bucket edges? `pooledbounds` keeps the uncertainty instead of making up a
+within-bucket distribution.
+
+It computes tight nearest-rank quantile bounds and exact lower/upper counts at
+chosen thresholds. Histograms may have different edges. No shared-edge
+rebucketing, linear interpolation, or expansion into individual observations is
+needed. It also supplies compressed raw-population witnesses attaining both
+threshold count bounds.
+
+This is an offline arithmetic tool, not a Prometheus query engine, confidence
+interval estimator, or proof that telemetry is correct.
+
+## Example
+
+Install from a checked-out copy with `pip install .`, then:
+
+```sh
+pooledbounds examples/mixed-bins.json --quantile 0.95 --threshold 120
+# or
+python -m pooledbounds examples/mixed-bins.json --quantile 0.95
+```
+
+The example combines 100 observations in each of two disjoint regions:
+
+| Region | Histogram intervals with nonzero counts |
+| --- | --- |
+| A | 90 in (0,100], 10 in (100,200] |
+| B | 50 in (0,150], 50 in (150,300] |
+
+The pooled p95 is **strictly greater than 150 and at most 300**. Between 90 and
+150 of the 200 observations are at or below 120, so the exact attainable fraction
+range is [9/20, 3/4]. A point estimate inside those ranges needs an extra
+assumption. Keeping only common finite edges would retain just 0 here and lose
+useful information.
+
+## Input contract
+
+```json
+{
+  "schema": 1,
+  "populations": "disjoint-finite-observations",
+  "histograms": [
+    {"id": "a", "edges": ["0", "100", "200"], "counts": [0, 90, 10, 0]},
+    {"id": "b", "edges": ["0", "150", "300"], "counts": [0, 50, 50, 0]}
+  ]
+}
+```
+
+- Counts are nonnegative **integers per bucket**, not cumulative counts,
+  weights, rates, or values already divided by a sampling factor.
+- Edges are finite decimal strings in strictly increasing order. Scientific
+  notation is allowed. Strings avoid silently rounding decimals through binary
+  floating point. JSON numbers are not accepted for edges or query values.
+- With edges `[a,b]`, counts describe `(-infinity,a]`, `(a,b]`, and
+  `(b,+infinity)`. All observations are finite real numbers. Empty edges with
+  one count mean the whole real line. Zero-count buckets are allowed.
+- Histograms must describe disjoint observations. Repeated cumulative snapshots
+  of the same counter are **not** separate populations. The declaration is an
+  assumption supplied by the caller; the tool cannot verify disjointness or
+  distinguish a plausible cumulative count vector from per-bucket counts.
+- Histogram IDs must be unique. Unknown fields, duplicate JSON keys, malformed
+  counts, non-increasing edges, and empty pooled populations are invalid.
+- Units must already match. There is no implicit milliseconds/seconds conversion.
+
+The input is not an OpenTelemetry or Prometheus export. Convert and check the
+measurement interval, reset behavior, temporality, units and bucket convention
+first. Do not feed `rate()` results as integer counts. `+Inf` observations,
+`-Inf` observations and NaNs are outside this model, even though bins can have
+unbounded endpoints.
+
+## Quantile meaning and output
+
+`--quantile` is repeatable; its default is 0.5, 0.95, 0.99. For `0 < q <= 1`,
+nearest rank is `ceil(q*N)` in the pooled sorted raw population. The lower
+endpoint is an infimum, **not an attained minimum**. A finite upper endpoint is
+attainable. Unbounded tails are explicit `-infinity`/`+infinity`, never replaced
+with a convenient finite estimate. There is no q=0 convention and no linear
+sample-quantile interpolation.
+
+All finite output values use exact rational objects:
+
+```json
+{"numerator": "3", "denominator": "4"}
+```
+
+Each quantile includes its rank and the sorted endpoint bucket crossing that
+rank, with counts before and through that bucket. These are arithmetic
+certificates under the input assumptions, not a cryptographic proof or raw-data
+audit. Equal endpoint ties can choose a different provenance bucket if the
+histograms are reordered; numerical bounds are unchanged.
+
+`--threshold` is repeatable and asks for the number of observations **<=** that
+value. Both count extrema are attained. Each witness lists one rational value
+and multiplicity for every occupied input bucket. It preserves every supplied
+bucket count, so the report does not expand a count of a billion into a billion
+rows. It does not claim that either synthetic population was actually observed.
+
+`input_sha256` binds the parsed document's canonical JSON representation
+(sorted keys, compact separators, ASCII escapes), not its raw file bytes. It is
+not a signature. It does not validate the input assumptions.
+
+## Why the bounds are tight
+
+Think of each count as repeated unknown values constrained to a bucket
+`(lower,upper]`. For any feasible raw population, sorting the lower endpoints
+bounds its kth value strictly from below; sorting the upper endpoints bounds
+it from above. The kth lower and kth upper endpoints are therefore a valid
+quantile envelope. Moving each unknown value arbitrarily close to its lower
+endpoint approaches the lower bound. Setting values at finite upper endpoints
+attains the finite upper bound. Unbounded endpoints can be approached without
+finite limits. No probabilistic assumption is involved.
+
+At threshold t, a bucket is forced below/equal t only if its upper endpoint is
+<=t. A bucket can contribute below/equal t exactly when its lower endpoint is
+<t. Sum these counts independently across the declared disjoint buckets. The
+emitted witnesses construct both extremes with valid finite representatives.
+The strict comparison matters: values in `(t,u]` cannot be <=t.
+
+## Python API
+
+```python
+from pooledbounds import analyze, InvalidHistogram, Limits
+
+report = analyze(document, quantiles=["0.95"], thresholds=["120"])
+# Invalid or out-of-budget inputs raise InvalidHistogram.
+```
+
+The API does not mutate the document, access the environment, import a model,
+open a network connection, or install anything. The CLI reads one UTF-8 JSON
+file or `-` for standard input. Exit 0 means a report was computed in the
+declared model, **not that an SLO passed**. Invalid data or I/O returns INVALID
+JSON and exit 2. Argument syntax errors use argparse stderr and exit 2.
+
+## Admission limits
+
+Defaults: 1,000 histograms, 100,000 total buckets including empty ones,
+1,000 queries, 128 characters per decimal, exponent magnitude <=1,000,
+and total count <=10^18. The CLI reads at most 8 MiB plus one byte before
+refusing a larger input. API callers already hold their documents in memory.
+
+`Limits` can adjust histogram, bucket, number-character, total-count and
+query/bucket-work caps. The work cap defaults to 1,000,000 units:
+`occupied_buckets * (quantile_queries + 2 * threshold_queries)`.
+This also bounds the number of threshold witness rows emitted. Endpoints are
+sorted once per side; count size does not cause per-observation allocation.
+These are admission limits, not hard RAM, encoded-output-size or CPU guarantees.
+Large rational values and caller-chosen larger caps can still be expensive.
+
+## Evidence and scope
+
+See [EVIDENCE.md](EVIDENCE.md) for the practical problem and comparison with
+existing histogram tools. This applies elementary order-statistic bounds to a
+specific offline workflow; it does not claim a new statistical method or that
+no other implementation exists. Existing native histogram/sketch tools are
+usually the better choice when you control future instrumentation.
+
+Tests include enumeration of every raw population in small integer/half-integer
+fixtures, independent checks of witness bucket membership and counts, exact
+large ranks, unbounded tails, invalid inputs and resource admission. Synthetic
+tests are not evidence of adoption or production accuracy.

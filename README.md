@@ -161,3 +161,15 @@ Tests include enumeration of every raw population in small integer/half-integer
 fixtures, independent checks of witness bucket membership and counts, exact
 large ranks, unbounded tails, invalid inputs and resource admission. Synthetic
 tests are not evidence of adoption or production accuracy.
+
+## Output failures
+
+The module and installed command return exit 2 when stdout cannot be written or
+flushed, including a closed pipe or a full device. Already-written partial bytes
+cannot be retracted, so check the exit status before using a report. The process
+runner redirects a failed stdout to the null device before shutdown, preventing
+Python's second flush from replacing exit 2 with exit 120.
+
+The callable `pooledbounds.cli.main(argv)` also returns 2 for these failures but
+never closes or redirects a caller-owned stream. An embedding application owns
+its own later flush and shutdown behavior.

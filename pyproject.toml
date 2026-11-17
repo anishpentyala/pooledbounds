@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pooledbounds"
-version = "0.1.0"
+version = "0.1.1"
 description = "Bounds, not interpolated guesses, for pooled unequal-bin histograms"
 requires-python = ">=3.10"
 license = "MIT"
 
 [project.scripts]
-pooledbounds = "pooledbounds.cli:main"
+pooledbounds = "pooledbounds.cli:entrypoint"
 
 [tool.setuptools.packages.find]
 where = ["src"]

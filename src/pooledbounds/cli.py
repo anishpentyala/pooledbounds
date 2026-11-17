@@ -25,6 +25,8 @@ def _execute(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.input == '-':
+            if sys.stdin is None:
+                raise InvalidHistogram('standard input is unavailable')
             raw = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
         else:
             with open(args.input, 'rb') as stream:

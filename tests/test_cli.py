@@ -165,3 +165,26 @@ def test_callable_none_stdout_returns_2_without_replacing_it(tmp_path, monkeypat
     monkeypatch.setattr(sys, 'stdout', None)
     assert main([str(p)]) == 2
     assert sys.stdout is None
+
+
+def _close_stdin_at_exec():
+    import os
+    os.close(0)
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='requires POSIX fd inheritance')
+@pytest.mark.parametrize('command', _commands())
+def test_process_no_stdin_at_interpreter_start(command):
+    result = subprocess.run(command + ['-'], stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            preexec_fn=_close_stdin_at_exec)
+    assert result.returncode == 2 and result.stderr == b''
+    assert json.loads(result.stdout) == {
+        'schema': 1, 'status': 'INVALID', 'error': 'standard input is unavailable'}
+
+
+def test_callable_none_stdin_invalid_without_replacing_it(monkeypatch, capsys):
+    monkeypatch.setattr(sys, 'stdin', None)
+    assert main(['-']) == 2 and sys.stdin is None
+    assert json.loads(capsys.readouterr().out) == {
+        'schema': 1, 'status': 'INVALID', 'error': 'standard input is unavailable'}

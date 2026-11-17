@@ -52,3 +52,92 @@ def test_module_stdin():
 def test_argument_error_is_exit_2():
     p = subprocess.run([sys.executable, '-m', 'pooledbounds'], capture_output=True, text=True)
     assert p.returncode == 2 and 'usage:' in p.stderr and not p.stdout
+
+
+@pytest.mark.parametrize('failure', ['write', 'flush', 'closed'])
+def test_main_preserves_caller_stream(tmp_path, monkeypatch, failure):
+    class CallerStream:
+        closed = failure == 'closed'
+        redirects = 0
+
+        def write(self, text):
+            if failure == 'write':
+                raise OSError('simulated write failure')
+            if self.closed:
+                raise ValueError('closed output')
+            return len(text)
+
+        def flush(self):
+            raise OSError('simulated flush failure')
+
+        def fileno(self):
+            self.redirects += 1
+            raise AssertionError('main must not inspect caller descriptors')
+
+        def close(self):
+            raise AssertionError('main must not close a caller stream')
+
+    stream = CallerStream()
+    p = tmp_path/'data.json'
+    p.write_text(json.dumps(doc(hist())))
+    monkeypatch.setattr(sys, 'stdout', stream)
+    assert main([str(p)]) == 2
+    assert sys.stdout is stream and stream.redirects == 0
+
+
+def _commands():
+    from pathlib import Path
+    console = Path(sys.executable).parent/'pooledbounds'
+    return [[sys.executable, '-m', 'pooledbounds'],
+            [sys.executable, '-m', 'pooledbounds.cli'], [str(console)]]
+
+
+@pytest.mark.parametrize('command', _commands())
+def test_process_full_device_exit_2(tmp_path, command):
+    from pathlib import Path
+    if not Path('/dev/full').exists():
+        pytest.skip('requires /dev/full')
+    p = tmp_path/'data.json'
+    p.write_text(json.dumps(doc(hist())))
+    with open('/dev/full', 'wb') as target:
+        result = subprocess.run(command + [str(p)], stdout=target, stderr=subprocess.PIPE)
+    assert result.returncode == 2
+    assert result.stderr == b''
+
+
+@pytest.mark.parametrize('command', _commands())
+def test_process_closed_pipe_exit_2(tmp_path, command):
+    import os
+    p = tmp_path/'data.json'
+    p.write_text(json.dumps(doc(hist())))
+    read_fd, write_fd = os.pipe()
+    os.close(read_fd)
+    try:
+        result = subprocess.run(command + [str(p)], stdout=write_fd, stderr=subprocess.PIPE)
+    finally:
+        os.close(write_fd)
+    assert result.returncode == 2
+    assert result.stderr == b''
+
+
+def test_process_custom_closed_stream_exit_2(tmp_path):
+    p = tmp_path/'data.json'
+    p.write_text(json.dumps(doc(hist())))
+    result = subprocess.run([
+        sys.executable, '-c',
+        'import io, sys; from pooledbounds.cli import entrypoint; '
+        'sys.stdout = io.StringIO(); sys.stdout.close(); '
+        'raise SystemExit(entrypoint())', str(p)
+    ], capture_output=True)
+    assert result.returncode == 2 and result.stdout == result.stderr == b''
+
+
+def test_process_closed_stdout_descriptor_exit_2(tmp_path):
+    p = tmp_path/'data.json'
+    p.write_text(json.dumps(doc(hist())))
+    result = subprocess.run([
+        sys.executable, '-c',
+        'import os; from pooledbounds.cli import entrypoint; '
+        'os.close(1); raise SystemExit(entrypoint())', str(p)
+    ], capture_output=True)
+    assert result.returncode == 2 and result.stdout == result.stderr == b''

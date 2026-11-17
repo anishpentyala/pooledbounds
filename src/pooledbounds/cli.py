@@ -40,7 +40,7 @@ def _execute(argv=None):
     try:
         sys.stdout.write(json.dumps(result, sort_keys=True) + '\n')
         sys.stdout.flush()
-    except (OSError, ValueError):
+    except (OSError, ValueError, AttributeError):
         return 2, True
     return code, False
 

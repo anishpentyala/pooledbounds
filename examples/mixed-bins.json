@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "populations": "disjoint-finite-observations",
+  "histograms": [
+    {"id": "region-a", "edges": ["0", "100", "200"], "counts": [0, 90, 10, 0]},
+    {"id": "region-b", "edges": ["0", "150", "300"], "counts": [0, 50, 50, 0]}
+  ]
+}

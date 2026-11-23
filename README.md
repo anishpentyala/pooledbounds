@@ -145,7 +145,12 @@ refusing a larger input. API callers already hold their documents in memory.
 query/bucket-work caps. The work cap defaults to 1,000,000 units:
 `occupied_buckets * (quantile_queries + 2 * threshold_queries)`.
 This also bounds the number of threshold witness rows emitted. Endpoints are
-sorted once per side; count size does not cause per-observation allocation.
+sorted once per side; cumulative integer counts then let each quantile rank
+use binary search instead of rescanning every occupied bucket. Equal endpoint
+ties retain input order and the same bucket certificates. The two cumulative
+count lists add one integer per occupied bucket per side. Threshold witnesses
+still scan buckets, and the original admission-work formula is unchanged.
+Count size does not cause per-observation allocation.
 These are admission limits, not hard RAM, encoded-output-size or CPU guarantees.
 Large rational values and caller-chosen larger caps can still be expensive.
 

@@ -3,6 +3,7 @@
 Histogram buckets are (-inf, edge0], (edge0, edge1], ..., (last, inf).
 Counts are observation counts, not weights, rates or cumulative counters.
 """
+from bisect import bisect_left
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from fractions import Fraction
@@ -101,16 +102,23 @@ def _endpoint_rows(buckets, side):
     return rows
 
 
-def _rank_endpoint(rows, rank, side):
-    index = 2 if side == 'lower' else 3
-    count = 0
+def _cumulative_counts(rows):
+    counts, total = [], 0
     for row in rows:
-        before = count
-        count += row[4]
-        if count >= rank:
-            return row[index], {'histogram': row[0], 'bucket': row[1],
-                                'count_before': before, 'count_through': count}
-    raise AssertionError('validated rank must be present')
+        total += row[4]
+        counts.append(total)
+    return counts
+
+
+def _rank_endpoint(rows, cumulative, rank, side):
+    index = 2 if side == 'lower' else 3
+    position = bisect_left(cumulative, rank)
+    if position == len(rows):
+        raise AssertionError('validated rank must be present')
+    row = rows[position]
+    before = 0 if position == 0 else cumulative[position - 1]
+    return row[index], {'histogram': row[0], 'bucket': row[1],
+                        'count_before': before, 'count_through': cumulative[position]}
 
 
 def analyze(document, *, quantiles=('0.5', '0.95', '0.99'), thresholds=(), limits=None):
@@ -130,11 +138,12 @@ def analyze(document, *, quantiles=('0.5', '0.95', '0.99'), thresholds=(), limit
     if (len(qs) + 2 * len(ts)) * len(buckets) > limits.max_query_bucket_work:
         raise InvalidHistogram('query/bucket work limit exceeded')
     lower_rows, upper_rows = _endpoint_rows(buckets, 'lower'), _endpoint_rows(buckets, 'upper')
+    lower_counts, upper_counts = _cumulative_counts(lower_rows), _cumulative_counts(upper_rows)
     quantile_reports = []
     for q in qs:
         rank = (q.numerator * total + q.denominator - 1) // q.denominator
-        lo, lo_proof = _rank_endpoint(lower_rows, rank, 'lower')
-        hi, hi_proof = _rank_endpoint(upper_rows, rank, 'upper')
+        lo, lo_proof = _rank_endpoint(lower_rows, lower_counts, rank, 'lower')
+        hi, hi_proof = _rank_endpoint(upper_rows, upper_counts, rank, 'upper')
         quantile_reports.append({'q': rational(q), 'rank': rank,
                                  'lower': endpoint(lo, '-infinity'),
                                  'upper': endpoint(hi, '+infinity'),

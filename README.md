@@ -178,3 +178,11 @@ Python's second flush from replacing exit 2 with exit 120.
 The callable `pooledbounds.cli.main(argv)` also returns 2 for these failures but
 never closes or redirects a caller-owned stream. An embedding application owns
 its own later flush and shutdown behavior.
+
+
+Argument help and usage are plain text, without automatic terminal color probes.
+This includes Python 3.14, where the parser and its help formatter each have an
+independent color default. A caller may supply a minimal or closed output stream;
+argument setup does not inspect that stream's terminal or file descriptor. The
+existing output boundary still handles report write/flush failures with exit 2.
+This does not add new handling for every possible help-output failure.

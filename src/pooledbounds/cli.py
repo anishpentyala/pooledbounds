@@ -1,6 +1,7 @@
 """Offline JSON histogram envelopes. Does not fetch, install, or query a server."""
 import argparse
 import json
+import inspect
 import os
 import sys
 from .core import InvalidHistogram, analyze
@@ -17,8 +18,22 @@ def _object(pairs):
     return result
 
 
+
+class _PlainFormatter(argparse.HelpFormatter):
+    def __init__(self, *args, **kwargs):
+        # 3.14 creates formatters with their own color=True default before
+        # applying the parser's color option. Disable both independent probes.
+        if 'color' in inspect.signature(argparse.HelpFormatter).parameters:
+            kwargs['color'] = False
+        super().__init__(*args, **kwargs)
+
+
 def _execute(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+    # Python 3.14 argparse probes stdout for color support during setup, even
+    # for ordinary report commands. Embedded callers may supply closed/minimal
+    # streams; the CLI output boundary, not color discovery, must handle them.
+    options = {'color': False} if 'color' in inspect.signature(argparse.ArgumentParser).parameters else {}
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=_PlainFormatter, **options)
     parser.add_argument('input', help='JSON file, or - for standard input')
     parser.add_argument('--quantile', action='append', help='decimal in (0,1]; repeatable')
     parser.add_argument('--threshold', action='append', default=[], help='finite decimal; repeatable')

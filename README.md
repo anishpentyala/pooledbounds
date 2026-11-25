@@ -134,6 +134,65 @@ file or `-` for standard input. Exit 0 means a report was computed in the
 declared model, **not that an SLO passed**. Invalid data or I/O returns INVALID
 JSON and exit 2. Argument syntax errors use argparse stderr and exit 2.
 
+## Threshold objectives without interpolation
+
+When the question is "at least 95% of observations were <=120", use an explicit
+objective instead of treating a successful arithmetic report as a passing SLO:
+
+```sh
+pooledbounds examples/mixed-bins.json --objective 120=.95
+```
+
+For this example only 90 to 150 of 200 observations can be <=120. The command
+returns `objective_status: "VIOLATED"` and exit 1: even the largest admissible
+fraction, 3/4, is below .95. The same fixture with `120=.7` is
+`INDETERMINATE` (exit 3), and with `120=.45` is `SATISFIED` (exit 0).
+
+Each repeatable `--objective THRESHOLD=MINIMUM_FRACTION` requests a minimum
+fraction of observations **<=** its threshold. Fractions are decimal strings
+between 0 and 1 inclusive, not percentages. Comparisons use exact rational
+arithmetic, with no rounding, tolerance or within-bucket interpolation.
+Objectives cannot be combined with `--quantile` or `--threshold`; ordinary
+queries and their exit behavior are unchanged when no objective is supplied.
+
+- `SATISFIED`: the minimum possible good fraction is >= the target. Every
+  compatible population meets the objective.
+- `VIOLATED`: the maximum possible good fraction is < the target. No compatible
+  population meets the objective.
+- `INDETERMINATE`: some compatible populations meet it and some do not. A
+  fraction whose upper bound equals the target is not a proven violation.
+
+For several objectives, all must hold: any proven violation returns 1;
+otherwise any indeterminate objective returns 3; otherwise the command returns
+0. These minimum-fraction objectives are jointly compatible whenever each is
+individually possible: putting values sufficiently close to each bucket's lower
+endpoint attains all queried maximum counts simultaneously. Invalid input,
+conflicting options and output failure return 2, taking priority over a computed
+verdict. A zero observation total is invalid, not a vacuous pass.
+
+The JSON retains the ordinary model status, input digest, total count and
+threshold evidence, including count/fraction extrema and compressed witnesses.
+`objectives` adds each exact target and a zero-based `threshold_index` into
+`thresholds`, plus its verdict. `objective_status` combines the verdicts. Witnesses
+are synthetic compatible populations, not measured requests.
+
+```python
+from pooledbounds import evaluate_objectives
+
+report = evaluate_objectives(document, [
+    {"threshold": "120", "minimum_fraction": ".95"},
+])
+assert report["objective_status"] in {"SATISFIED", "VIOLATED", "INDETERMINATE"}
+```
+
+This is a decision **inside the declared input model**, not a production SLO
+certification, statistical confidence statement, telemetry-completeness check,
+or live alert. Units, windows, disjointness and correct per-bucket integer counts
+remain the caller's responsibility. Prometheus cumulative snapshots, rates and
+reset handling are still outside the accepted input format. Existing monitoring
+tools are preferable for live SLOs; this mode answers what an already exported,
+unequal-bin population can prove without inventing hidden observations.
+
 ## Admission limits
 
 Defaults: 1,000 histograms, 100,000 total buckets including empty ones,

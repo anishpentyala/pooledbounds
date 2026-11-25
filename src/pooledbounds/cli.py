@@ -5,6 +5,7 @@ import inspect
 import os
 import sys
 from .core import InvalidHistogram, analyze
+from .objectives import evaluate_objectives
 
 MAX_INPUT_BYTES = 8 * 1024 * 1024
 
@@ -37,6 +38,7 @@ def _execute(argv=None):
     parser.add_argument('input', help='JSON file, or - for standard input')
     parser.add_argument('--quantile', action='append', help='decimal in (0,1]; repeatable')
     parser.add_argument('--threshold', action='append', default=[], help='finite decimal; repeatable')
+    parser.add_argument('--objective', action='append', help='THRESHOLD=MINIMUM_FRACTION; repeatable; exclusive with query options')
     args = parser.parse_args(argv)
     try:
         if args.input == '-':
@@ -49,9 +51,21 @@ def _execute(argv=None):
         if len(raw) > MAX_INPUT_BYTES:
             raise InvalidHistogram('input byte limit exceeded')
         document = json.loads(raw.decode('utf-8'), object_pairs_hook=_object)
-        result = analyze(document, quantiles=args.quantile if args.quantile is not None else
-                         ['0.5', '0.95', '0.99'], thresholds=args.threshold)
-        code = 0
+        if args.objective is not None:
+            if args.quantile is not None or args.threshold:
+                raise InvalidHistogram('objectives cannot be combined with quantile or threshold options')
+            objectives = []
+            for value in args.objective:
+                if value.count('=') != 1:
+                    raise InvalidHistogram('objective must be THRESHOLD=MINIMUM_FRACTION')
+                threshold, fraction = value.split('=')
+                objectives.append({'threshold': threshold, 'minimum_fraction': fraction})
+            result = evaluate_objectives(document, objectives)
+            code = {'SATISFIED': 0, 'VIOLATED': 1, 'INDETERMINATE': 3}[result['objective_status']]
+        else:
+            result = analyze(document, quantiles=args.quantile if args.quantile is not None else
+                             ['0.5', '0.95', '0.99'], thresholds=args.threshold)
+            code = 0
     except (InvalidHistogram, ValueError, OSError, UnicodeError, RecursionError) as exc:
         result, code = {'schema': 1, 'status': 'INVALID', 'error': str(exc)}, 2
     try:
